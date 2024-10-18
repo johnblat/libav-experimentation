@@ -1,6 +1,6 @@
 cl.exe /Zi ^
 /I "ffmpeg-master-latest-win64-gpl-shared/include" ^
-/I "SDL2-2.30.8/include" ^
+/I "SDL-release-2.30.8/include" ^
 /Fe:build\ffmpeg-test.exe main.cpp ^
 ffmpeg-master-latest-win64-gpl-shared\lib\avcodec.lib ^
 ffmpeg-master-latest-win64-gpl-shared\lib\avformat.lib ^

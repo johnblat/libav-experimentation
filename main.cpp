@@ -135,6 +135,34 @@ int64_t frame_to_pts(AVStream* pavStream, int frame) {
     return (int64_t(frame) * pavStream->r_frame_rate.den *  pavStream->time_base.den) / (int64_t(pavStream->r_frame_rate.num) * pavStream->time_base.num);
 }
 
+inline int read_forward()
+{
+    int read_frame_err = 0;
+    while((read_frame_err = av_read_frame(format_ctx, curr_pkt)) >= 0) {
+        if(curr_pkt->stream_index == vid_stream_idx) {
+            if(curr_errnum = avcodec_send_packet(vid_codec_ctx, curr_pkt), curr_errnum < 0) {
+                print_curr_err_str();
+                return curr_errnum;
+            }
+            while(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum >= 0) {
+                if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF) {
+                    print_curr_err_str();
+                    return curr_errnum;
+                }
+                else if(curr_errnum == AVERROR_EOF) {
+                    return curr_errnum;
+                }
+            }
+        }
+        av_packet_unref(curr_pkt);
+    }
+    if(read_frame_err < 0) {
+        curr_errnum = read_frame_err;
+        print_curr_err_str();
+        return;
+    }
+}
+
 int main(int argc, char **argv) {
     // args
     if (argc < 3) {
@@ -149,7 +177,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Error: Could not initialize SDL\n");
             return 1;
         }
-        if(window = SDL_CreateWindow("SDL Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1920, 1080, SDL_WINDOW_SHOWN), window == NULL) {
+        if(window = SDL_CreateWindow("SDL Window", -1920, 30, 1920, 1080, SDL_WINDOW_SHOWN), window == NULL) {
             fprintf(stderr, "Error: Could not create window\n");
             return 1;
         }
@@ -213,17 +241,16 @@ int main(int argc, char **argv) {
         }
     }
 
-    // get view_frame and save in curr_vid_frame from the video source
-    int frame_count = 0;
 
-    int read_frame_err  = 0;
-    while( (read_frame_err = av_read_frame(format_ctx, curr_pkt)) >= 0 ) {
+    { // read until first valid frame
+        int read_frame_err = 0;
+        while((read_frame_err = av_read_frame(format_ctx, curr_pkt)) >= 0 ) {
             if(curr_pkt->stream_index == vid_stream_idx) {
                 if(curr_errnum = avcodec_send_packet(vid_codec_ctx, curr_pkt), curr_errnum < 0) {
                     print_curr_err_str();
                     return 1;
                 }
-                if(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum < 0) {
+                if(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum >= 0) {
                     if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF) {
                         print_curr_err_str();
                         return 1;
@@ -233,13 +260,18 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+            av_packet_unref(curr_pkt);
+        }
+        if(read_frame_err < 0) {
+            curr_errnum = read_frame_err;
+            print_curr_err_str();
+            return 1;
+        }
     }
 
 
-    //LOGAVERR(avformat_seek_file(format_ctx, vid_stream_idx, view_frame-1, view_frame, view_frame+1, AVSEEK_FLAG_FRAME));
-    int64_t timestamp = av_rescale_q(view_frame, format_ctx->streams[vid_stream_idx]->time_base, AV_TIME_BASE_Q);
-    int64_t seek_target = frame_to_pts(format_ctx->streams[vid_stream_idx], view_frame);
-    LOGAVERR(av_seek_frame(format_ctx, vid_stream_idx, 10, AVSEEK_FLAG_FRAME | AVSEEK_FLAG_BACKWARD));
+
+    LOGAVERR(av_seek_frame(format_ctx, vid_stream_idx, 1, AVSEEK_FLAG_FRAME | AVSEEK_FLAG_BACKWARD));
 
     int found_frame = 0;
     { // should just get first frame and map it to sdltexture
