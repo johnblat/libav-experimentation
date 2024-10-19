@@ -22,7 +22,8 @@ const AVCodec *vid_codec = NULL;
 AVFrame *curr_vid_frame = NULL;
 AVPacket *curr_pkt = NULL;
 int curr_errnum = 0;
-
+int64_t frame_timestamps[1024] = {0};
+int n_frames = 0;
   // 2. sdl
 SDL_Window *window = NULL;
 SDL_Renderer *renderer = NULL;
@@ -139,28 +140,32 @@ inline int read_forward()
 {
     int read_frame_err = 0;
     while((read_frame_err = av_read_frame(format_ctx, curr_pkt)) >= 0) {
-        if(curr_pkt->stream_index == vid_stream_idx) {
-            if(curr_errnum = avcodec_send_packet(vid_codec_ctx, curr_pkt), curr_errnum < 0) {
+        if(curr_pkt->stream_index != vid_stream_idx) {
+            continue;
+        }
+        if(curr_errnum = avcodec_send_packet(vid_codec_ctx, curr_pkt), curr_errnum < 0) {
+            print_curr_err_str();
+            av_packet_unref(curr_pkt);
+            return curr_errnum;
+        }
+        if(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum >= 0) {
+            if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF) {
                 print_curr_err_str();
-                return curr_errnum;
+                return -1;
             }
-            while(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum >= 0) {
-                if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF) {
-                    print_curr_err_str();
-                    return curr_errnum;
-                }
-                else if(curr_errnum == AVERROR_EOF) {
-                    return curr_errnum;
-                }
+            else if(curr_errnum == AVERROR_EOF) {
+                break;
             }
         }
+        
         av_packet_unref(curr_pkt);
     }
-    if(read_frame_err < 0) {
+    if(read_frame_err < 0 && read_frame_err != AVERROR_EOF) {
         curr_errnum = read_frame_err;
         print_curr_err_str();
-        return;
+        return read_frame_err;
     }
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -241,8 +246,44 @@ int main(int argc, char **argv) {
         }
     }
 
+    int receieved_frames = 0;
+    int eagain_count = 0;
+    // { // read until first valid frame good
+    //     int read_frame_err = 0;
+    //     while((read_frame_err = av_read_frame(format_ctx, curr_pkt)) >= 0 ) {
+    //         if(curr_pkt->stream_index == vid_stream_idx) {
+    //             if(curr_errnum = avcodec_send_packet(vid_codec_ctx, curr_pkt), curr_errnum < 0) {
+    //                 print_curr_err_str();
+    //                 return 1;
+    //             }
+    //             if(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum != 0) {
+    //                 if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF && curr_errnum < 0) {
+    //                     print_curr_err_str();
+    //                     return 1;
+    //                 }
+    //                 else if(curr_errnum == AVERROR_EOF) {
+    //                     break;
+    //                 }
+    //             }
+    //             // if( curr_errnum != AVERROR(EAGAIN)) receieved_frames++;
+    //             if(curr_errnum == AVERROR(EAGAIN)) {
+    //                 eagain_count++;
+    //             }
+                
+    //             receieved_frames++;
 
-    { // read until first valid frame
+
+    //         }
+    //         av_packet_unref(curr_pkt);
+    //     }
+    //     if(read_frame_err < 0 && read_frame_err != AVERROR_EOF) {
+    //         curr_errnum = read_frame_err;
+    //         print_curr_err_str();
+    //         return 1;
+    //     }
+    // }
+
+    { // read until first valid frame good first frame attempt
         int read_frame_err = 0;
         while((read_frame_err = av_read_frame(format_ctx, curr_pkt)) >= 0 ) {
             if(curr_pkt->stream_index == vid_stream_idx) {
@@ -250,8 +291,8 @@ int main(int argc, char **argv) {
                     print_curr_err_str();
                     return 1;
                 }
-                if(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum >= 0) {
-                    if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF) {
+                if(curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame), curr_errnum != 0) {
+                    if (curr_errnum != AVERROR(EAGAIN) && curr_errnum != AVERROR_EOF && curr_errnum < 0) {
                         print_curr_err_str();
                         return 1;
                     }
@@ -259,19 +300,72 @@ int main(int argc, char **argv) {
                         break;
                     }
                 }
+                // if( curr_errnum != AVERROR(EAGAIN)) receieved_frames++;
+                if(curr_errnum == AVERROR(EAGAIN)) {
+                    av_packet_unref(curr_pkt);
+                    eagain_count++;
+                    continue;
+                }
+                
+                // receieved_frames++;
+                // if (receieved_frames == 3){
+                //     av_packet_unref(curr_pkt);
+                //     break;
+                // }
+                frame_timestamps[n_frames] = curr_vid_frame->pts;
+                n_frames++;
+
             }
             av_packet_unref(curr_pkt);
         }
-        if(read_frame_err < 0) {
+        if(read_frame_err < 0 && read_frame_err != AVERROR_EOF) {
             curr_errnum = read_frame_err;
             print_curr_err_str();
             return 1;
         }
     }
+    // { //bad
+    //     while(curr_errnum = av_read_frame(format_ctx, curr_pkt), curr_errnum == 0 ) {
+    //         if(curr_pkt->stream_index != vid_stream_idx) {
+    //             av_packet_unref(curr_pkt);
+    //             continue;
+    //         }
 
+    //         curr_errnum = avcodec_send_packet(vid_codec_ctx, curr_pkt);
+    //         if (curr_errnum == AVERROR(EAGAIN)) { // non-decoder error
+    //             av_packet_unref(curr_pkt);
+    //             continue;
+    //         } else if (curr_errnum == AVERROR_EOF) {
+    //             av_packet_unref(curr_pkt);
+    //             break;
+    //         } else if (curr_errnum < 0) { // decoder error
+    //             av_packet_unref(curr_pkt);
+    //             print_curr_err_str();
+    //             return 1;
+    //         }
+            
 
+    //         curr_errnum = avcodec_receive_frame(vid_codec_ctx, curr_vid_frame);
+    //         av_packet_unref(curr_pkt);
+    //         if (curr_errnum == AVERROR(EAGAIN)){ // decoder error
+    //             continue;
+    //         } else if (curr_errnum == AVERROR_EOF) {
+    //             break;
+    //         } else if (curr_errnum < 0)  { // non-decoder error
+    //             print_curr_err_str();
+    //             return 1;
+    //         } 
+    //         break; // first valid frame fully read
+            
+    //     }
+    //     if(curr_errnum < 0 && curr_errnum != AVERROR_EOF) {
+    //         print_curr_err_str();
+    //         return 1;
+    //     }
+    // }
 
-    LOGAVERR(av_seek_frame(format_ctx, vid_stream_idx, 1, AVSEEK_FLAG_FRAME | AVSEEK_FLAG_BACKWARD));
+    // LOGAVERR(av_seek_frame(format_ctx, vid_stream_idx, 48, AVSEEK_FLAG_ANY | AVSEEK_FLAG_BACKWARD ));
+    avformat_seek_file(format_ctx, vid_stream_idx, 5,6,7, AVSEEK_FLAG_FRAME | AVSEEK_FLAG_BACKWARD);
 
     int found_frame = 0;
     { // should just get first frame and map it to sdltexture
@@ -299,10 +393,10 @@ int main(int argc, char **argv) {
             }
             av_packet_unref(curr_pkt);
         }
-        if(read_frame_err < 0) {
+        if(read_frame_err < 0 && read_frame_err != AVERROR_EOF) {
             curr_errnum = read_frame_err;
             print_curr_err_str();
-            //return 1;
+            return 1;
         }
     }
 
